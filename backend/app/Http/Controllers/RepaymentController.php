@@ -22,8 +22,10 @@ class RepaymentController extends Controller
                 throw ValidationException::withMessages(['amount' => "Repayment exceeds the outstanding balance (₹{$left})."]);
             }
             $payment = $loan->repayments()->create($request->validated());
-            if ($total === round((float) $loan->amount, 2)) {
-                $loan->update(['status' => 'closed']);
+            
+            if ($total >= round((float) $loan->amount, 2)) {
+                $loan->status = 'closed';
+                $loan->save();
             }
             return $payment;
         });

@@ -1,0 +1,549 @@
+openapi: 3.0.3
+info:
+  title: Fund Request & Loan Tracker API
+  version: 1.0.0
+  description: 'Laravel REST API with Sanctum tokens. Log in with `POST /login`, copy the `token`, click **Authorize** and
+    paste it. Seeded users (password `password`): admin@example.com, alice@example.com, bob@example.com.'
+servers:
+- url: http://localhost:8000/api
+tags:
+- name: Auth
+- name: Loans
+- name: Repayments
+- name: Documents
+- name: AI Assistant
+- name: Dashboard
+paths:
+  /register:
+    post:
+      tags:
+      - Auth
+      summary: Register an applicant
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              - email
+              - password
+              - password_confirmation
+              properties:
+                name: &id001
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                password_confirmation: *id001
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422': &id002
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+  /login:
+    post:
+      tags:
+      - Auth
+      summary: Log in and get a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              - password
+              properties:
+                email:
+                  type: string
+                  example: admin@example.com
+                password:
+                  type: string
+                  example: password
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422': *id002
+  /logout:
+    post:
+      tags:
+      - Auth
+      summary: Revoke the current token
+      security: &id003
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+        '401': &id004
+          description: Not logged in or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /loans:
+    get:
+      tags:
+      - Loans
+      summary: 'List loans (applicant: own, admin: all)'
+      security: *id003
+      parameters:
+      - name: page
+        in: query
+        schema:
+          type: integer
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - closed
+      - name: search
+        in: query
+        description: Search by purpose
+        schema: *id001
+      responses:
+        '200':
+          description: Paginated loans
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanList'
+        '401': *id004
+        '422': *id002
+    post:
+      tags:
+      - Loans
+      summary: Create a loan request (applicant only)
+      security: *id003
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - amount
+              - tenure_months
+              - purpose
+              properties:
+                amount:
+                  type: number
+                  minimum: 10000
+                  maximum: 1000000
+                  example: 150000
+                tenure_months:
+                  type: integer
+                  minimum: 6
+                  maximum: 60
+                  example: 24
+                purpose:
+                  type: string
+                  example: Home renovation
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Loan'
+        '401': *id004
+        '403': &id005
+          description: Not allowed (policy)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422': *id002
+  /loans/{id}:
+    get:
+      tags:
+      - Loans
+      summary: Get a loan with repayments and documents (owner or admin)
+      security: *id003
+      parameters: &id006
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        example: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Loan'
+        '401': *id004
+        '403': *id005
+        '404': &id007
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /loans/{id}/status:
+    patch:
+      tags:
+      - Loans
+      summary: Approve or reject a pending loan (admin)
+      security: *id003
+      parameters: *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              - remarks
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - approved
+                  - rejected
+                remarks:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Loan'
+        '401': *id004
+        '403': *id005
+        '404': *id007
+        '422':
+          description: Validation error, or the loan is not pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+  /loans/{id}/repayments:
+    post:
+      tags:
+      - Repayments
+      summary: Record a repayment (admin, approved loans only)
+      security: *id003
+      parameters: *id006
+      description: Total repaid cannot exceed the loan amount. The loan becomes `closed` when fully repaid.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - amount
+              - paid_on
+              - reference_no
+              properties:
+                amount:
+                  type: number
+                  example: 15000
+                paid_on:
+                  type: string
+                  format: date
+                  example: '2026-11-02'
+                reference_no:
+                  type: string
+                  example: REF-001
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Repayment'
+        '401': *id004
+        '403': *id005
+        '404': *id007
+        '422': *id002
+  /loans/{id}/documents:
+    post:
+      tags:
+      - Documents
+      summary: Upload a PDF (owner). Queues the AI summary
+      security: *id003
+      parameters: *id006
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF, max 5 MB
+      responses:
+        '201':
+          description: Created (summary_status = pending)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Document'
+        '401': *id004
+        '403': *id005
+        '404': *id007
+        '422': *id002
+  /loans/{id}/ask:
+    post:
+      tags:
+      - AI Assistant
+      summary: Ask a question about this loan only
+      security: *id003
+      parameters: *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - question
+              properties:
+                question:
+                  type: string
+                  minLength: 3
+                  maxLength: 300
+                  example: How much is still outstanding?
+      responses:
+        '200':
+          description: Answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer: *id001
+        '401': *id004
+        '403': *id005
+        '404': *id007
+        '422': *id002
+        '503':
+          description: Assistant unavailable (timeout, rate limit or server error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /dashboard/summary:
+    get:
+      tags:
+      - Dashboard
+      summary: Summary numbers (admin)
+      security: *id003
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+        '401': *id004
+        '403': *id005
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Error:
+      type: object
+      properties:
+        message: *id001
+    ValidationError:
+      type: object
+      properties:
+        message: *id001
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: *id001
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        name: *id001
+        email: *id001
+        role:
+          type: string
+          enum:
+          - applicant
+          - admin
+    AuthResponse:
+      type: object
+      properties:
+        token: *id001
+        user:
+          $ref: '#/components/schemas/User'
+    Repayment:
+      type: object
+      properties:
+        id:
+          type: integer
+        amount: &id008
+          type: number
+        paid_on:
+          type: string
+          format: date
+        reference_no: *id001
+    Document:
+      type: object
+      properties:
+        id:
+          type: integer
+        original_name: *id001
+        summary_status:
+          type: string
+          enum:
+          - pending
+          - completed
+          - failed
+        summary:
+          type: object
+          nullable: true
+          properties:
+            applicant_name: *id001
+            monthly_income: *id008
+            employer: *id001
+            key_risks:
+              type: array
+              items: *id001
+            summary:
+              type: string
+              description: Max 80 words
+        created_at:
+          type: string
+          format: date-time
+    Loan:
+      type: object
+      properties:
+        id:
+          type: integer
+        user:
+          $ref: '#/components/schemas/User'
+        amount: *id008
+        tenure_months:
+          type: integer
+        purpose: *id001
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - closed
+        remarks:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        repaid: *id008
+        outstanding: *id008
+        repayments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Repayment'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+    LoanList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Loan'
+        links:
+          type: object
+        meta:
+          type: object
+          properties:
+            current_page:
+              type: integer
+            last_page:
+              type: integer
+            per_page:
+              type: integer
+            total:
+              type: integer
+    Dashboard:
+      type: object
+      properties:
+        counts:
+          type: object
+          properties:
+            pending:
+              type: integer
+            approved:
+              type: integer
+            rejected:
+              type: integer
+            closed:
+              type: integer
+        total_disbursed: *id008
+        total_repaid: *id008
+        total_outstanding: *id008
