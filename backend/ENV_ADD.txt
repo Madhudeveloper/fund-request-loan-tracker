@@ -1,0 +1,7 @@
+Add these lines to backend/.env (and .env.example):
+
+AI_PROVIDER=mock
+ANTHROPIC_API_KEY=
+AI_MODEL=claude-haiku-5-5
+AI_TIMEOUT=30
+AI_MAX_CHARS=12000
